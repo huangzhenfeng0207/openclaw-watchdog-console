@@ -1,7 +1,7 @@
 {
   "name": "openclaw-desktop",
   "version": "0.1.0",
-  "description": "Local desktop console for OpenClaw watchdog runtime on macOS",
+  "description": "Attach-only macOS desktop guardian for local OpenClaw runtimes",
   "author": "OpenClaw Team",
   "private": true,
   "type": "module",
@@ -16,7 +16,7 @@
   },
   "build": {
     "appId": "ai.openclaw.desktop",
-    "productName": "OpenClaw",
+    "productName": "OpenClaw Guardian",
     "directories": {
       "output": "dist"
     },
@@ -28,28 +28,16 @@
     ],
     "extraResources": [
       {
-        "from": "../../console",
-        "to": "app-root/console"
+        "from": "../../adapter",
+        "to": "app-root/adapter"
       },
       {
-        "from": "../../install.sh",
-        "to": "app-root/install.sh"
+        "from": "../../shared",
+        "to": "app-root/shared"
       },
       {
-        "from": "../../watchdog.sh",
-        "to": "app-root/watchdog.sh"
-      },
-      {
-        "from": "../../ctl.sh",
-        "to": "app-root/ctl.sh"
-      },
-      {
-        "from": "../../chat-with-openclaw.sh",
-        "to": "app-root/chat-with-openclaw.sh"
-      },
-      {
-        "from": "../../.env.example",
-        "to": "app-root/.env.example"
+        "from": "../../supervisor",
+        "to": "app-root/supervisor"
       }
     ],
     "mac": {

@@ -1,9 +1,18 @@
-import { app, BrowserWindow, Menu, Tray, nativeImage, ipcMain, shell, safeStorage } from "electron";
-import { execFile } from "node:child_process";
+import {
+  app,
+  BrowserWindow,
+  Menu,
+  Tray,
+  dialog,
+  ipcMain,
+  nativeImage,
+  shell,
+} from "electron";
 import fs from "node:fs";
-import { appendFile, mkdir, readFile, stat, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, stat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { execFile } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 
@@ -11,30 +20,31 @@ const execFileAsync = promisify(execFile);
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const DEV_ROOT = path.resolve(__dirname, "..", "..");
-const PACKAGED_ROOT = path.join(process.resourcesPath, "app-root");
-const PROJECT_ROOT = app.isPackaged ? PACKAGED_ROOT : DEV_ROOT;
 const UPDATE_URL = "https://github.com/huangzhenfeng0207/openclaw-watchdog-console/releases";
-
-const APP_SUPPORT_DIR = path.join(os.homedir(), "Library", "Application Support", "OpenClaw");
-const APP_LOG_DIR = path.join(os.homedir(), "Library", "Logs", "OpenClaw");
-const DESKTOP_LOG_PATH = path.join(APP_LOG_DIR, "desktop.log");
-const SECURE_STORE_PATH = path.join(APP_SUPPORT_DIR, "secure-store.json");
-const ENV_PATH = path.join(PROJECT_ROOT, ".env");
 
 let mainWindow = null;
 let tray = null;
 let isQuitting = false;
-let actionLock = false;
-let core = null;
-let bootstrapState = {
-  tokenMissing: false,
-  status: null,
-  model: null,
-  startupError: null,
-};
+let modulesPromise = null;
+let bootstrapSnapshot = null;
+
+function appRoot() {
+  return app.isPackaged ? path.join(process.resourcesPath, "app-root") : DEV_ROOT;
+}
 
 function ts() {
   return new Date().toISOString();
+}
+
+function runtimePathsFallback() {
+  const supportDir = path.join(os.homedir(), "Library", "Application Support", "OpenClaw Guardian");
+  const logDir = path.join(os.homedir(), "Library", "Logs", "OpenClaw Guardian");
+  return {
+    supportDir,
+    runtimeDir: path.join(supportDir, "runtime"),
+    logDir,
+    desktopLogPath: path.join(logDir, "desktop.log"),
+  };
 }
 
 async function rotateLogFile(filePath, maxBytes = 10 * 1024 * 1024, keep = 3) {
@@ -64,625 +74,358 @@ async function rotateLogFile(filePath, maxBytes = 10 * 1024 * 1024, keep = 3) {
   }
 }
 
-async function log(level, message, details = "") {
-  const line = `${ts()} [desktop][${level}] ${message}${details ? ` | ${details}` : ""}\n`;
-  await rotateLogFile(DESKTOP_LOG_PATH);
-  await appendFile(DESKTOP_LOG_PATH, line).catch(() => undefined);
+async function desktopLog(level, message, details = "") {
+  const { desktopLogPath, logDir } = runtimePathsFallback();
+  await mkdir(logDir, { recursive: true });
+  await appendFile(desktopLogPath, "").catch(() => undefined);
+  await rotateLogFile(desktopLogPath);
+  await appendFile(
+    desktopLogPath,
+    `${ts()} [desktop][${level}] ${message}${details ? ` | ${details}` : ""}\n`,
+  ).catch(() => undefined);
 }
 
-async function ensureLocalDirs() {
-  await mkdir(APP_SUPPORT_DIR, { recursive: true });
-  await mkdir(APP_LOG_DIR, { recursive: true });
-  await appendFile(DESKTOP_LOG_PATH, "").catch(() => undefined);
+async function importAppModule(relativePath) {
+  const href = pathToFileURL(path.join(appRoot(), relativePath)).href;
+  return import(href);
 }
 
-async function ensureExecutableScripts() {
-  const scriptNames = ["install.sh", "ctl.sh", "watchdog.sh", "chat-with-openclaw.sh"];
-  await Promise.all(
-    scriptNames.map((name) =>
-      fs.promises.chmod(path.join(PROJECT_ROOT, name), 0o755).catch(() => undefined),
-    ),
-  );
-}
-
-async function runCommand(file, args, timeoutMs = 30000) {
-  try {
-    const result = await execFileAsync(file, args, {
-      timeout: timeoutMs,
-      maxBuffer: 10 * 1024 * 1024,
-      env: process.env,
-      cwd: PROJECT_ROOT,
-    });
-    return {
-      ok: true,
-      stdout: (result.stdout || "").trim(),
-      stderr: (result.stderr || "").trim(),
-    };
-  } catch (error) {
-    return {
-      ok: false,
-      stdout: String(error.stdout || "").trim(),
-      stderr: String(error.stderr || "").trim(),
-      message: error.message || "command failed",
-    };
+async function ensureModules() {
+  if (!modulesPromise) {
+    modulesPromise = Promise.all([
+      importAppModule("shared/runtime.mjs"),
+      importAppModule("adapter/openclaw/index.mjs"),
+      importAppModule("supervisor/install.mjs"),
+      importAppModule("supervisor/client.mjs"),
+    ]).then(([runtime, adapter, install, client]) => ({ runtime, adapter, install, client }));
   }
+  return modulesPromise;
 }
 
-function parseEnvToken(text) {
-  const match = text.match(/^OPENCLAW_GATEWAY_TOKEN=(.+)$/m);
-  return match ? match[1].trim() : "";
+async function callSupervisor(method, params = {}, timeoutMs = 15000) {
+  const modules = await ensureModules();
+  return modules.client.requestSupervisor(method, params, { timeoutMs });
 }
 
-async function readEnvToken() {
-  const envText = await readFile(ENV_PATH, "utf8").catch(() => "");
-  return parseEnvToken(envText);
+async function waitForSupervisor() {
+  let lastError = null;
+  for (let attempt = 0; attempt < 12; attempt += 1) {
+    try {
+      await callSupervisor("ping", {}, 2000);
+      return true;
+    } catch (error) {
+      lastError = error;
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    }
+  }
+  throw lastError || new Error("Supervisor did not become ready");
 }
 
-async function maskEnvTokenLine() {
-  const envText = await readFile(ENV_PATH, "utf8").catch(() => "");
-  if (!envText.includes("OPENCLAW_GATEWAY_TOKEN=")) {
+async function ensureSupervisorReady() {
+  const modules = await ensureModules();
+  await modules.runtime.ensureRuntimeDirs();
+
+  try {
+    await callSupervisor("ping", {}, 1500);
     return;
-  }
-  const replaced = envText.replace(
-    /^OPENCLAW_GATEWAY_TOKEN=.*$/m,
-    `# OPENCLAW_GATEWAY_TOKEN=*** migrated_to_secure_store ${ts()}`,
-  );
-  await writeFile(ENV_PATH, replaced, "utf8").catch(() => undefined);
-}
-
-async function loadSecureStore() {
-  const raw = await readFile(SECURE_STORE_PATH, "utf8").catch(() => "");
-  if (!raw) {
-    return {};
-  }
-  try {
-    return JSON.parse(raw);
   } catch {
-    return {};
+    // install or recover below
   }
+
+  const nodePath = await modules.adapter.resolveNodePath();
+  const agentPath = path.join(appRoot(), "supervisor", "agent.mjs");
+  await modules.install.ensureSupervisorInstalled({ agentPath, nodePath });
+  await waitForSupervisor();
 }
 
-async function saveSecureStore(payload) {
-  await writeFile(SECURE_STORE_PATH, JSON.stringify(payload, null, 2), "utf8");
-}
-
-function encryptString(value) {
-  if (safeStorage.isEncryptionAvailable()) {
-    return {
-      mode: "safeStorage",
-      ciphertext: safeStorage.encryptString(value).toString("base64"),
-    };
-  }
-  return {
-    mode: "base64",
-    ciphertext: Buffer.from(value, "utf8").toString("base64"),
-  };
-}
-
-function decryptString(payload) {
-  if (!payload?.ciphertext) {
-    return "";
-  }
-  if (payload.mode === "safeStorage" && safeStorage.isEncryptionAvailable()) {
-    return safeStorage.decryptString(Buffer.from(payload.ciphertext, "base64"));
-  }
-  return Buffer.from(payload.ciphertext, "base64").toString("utf8");
-}
-
-async function getStoredToken() {
-  const store = await loadSecureStore();
-  return decryptString(store.gatewayToken);
-}
-
-async function setStoredToken(token) {
-  const store = await loadSecureStore();
-  store.gatewayToken = {
-    ...encryptString(token),
-    updatedAt: ts(),
-  };
-  await saveSecureStore(store);
-}
-
-async function migrateTokenIfNeeded() {
-  const secureToken = await getStoredToken();
-  if (secureToken) {
-    return { token: secureToken, migrated: false };
-  }
-
-  const envToken = await readEnvToken();
-  if (!envToken) {
-    return { token: "", migrated: false };
-  }
-
-  await setStoredToken(envToken);
-  await maskEnvTokenLine();
-  await log("info", "Gateway token migrated from .env to secure store");
-  return { token: envToken, migrated: true };
-}
-
-async function importCore(token = "") {
-  if (token) {
-    process.env.OPENCLAW_GATEWAY_TOKEN = token;
-  }
-  process.env.OPENCLAW_PROJECT_DIR = PROJECT_ROOT;
-
-  const modulePath = pathToFileURL(path.join(PROJECT_ROOT, "console", "core", "api.mjs")).href;
-  core = await import(modulePath);
-  if (token) {
-    core.config.gatewayToken = token;
-  }
-}
-
-async function launchctlList() {
-  const result = await runCommand("/bin/launchctl", ["list"], 10000);
-  return result.ok ? result.stdout : "";
-}
-
-function serviceExists(launchctlText, label) {
-  return launchctlText.split(/\r?\n/).some((line) => line.trim().endsWith(label));
-}
-
-async function ensureLaunchdBaseline() {
-  const current = await launchctlList();
-  if (serviceExists(current, "ai.openclaw.gateway") && serviceExists(current, "ai.openclaw.watchdog")) {
-    return;
-  }
-  await log("warn", "launchd services missing, running silent install");
-  await runCommand("/bin/bash", [path.join(PROJECT_ROOT, "ctl.sh"), "install"], 180000);
-}
-
-async function reconcileRuntime() {
-  const status = await core.getStatusModel(true).catch(() => null);
-  if (!status) {
-    await runCommand("/bin/bash", [path.join(PROJECT_ROOT, "ctl.sh"), "start"], 60000);
-    return core.getStatusModel(true).catch(() => null);
-  }
-
-  const gatewayOnline = status.gateway?.status === "online";
-  const watchdogOnline = status.watchdog?.status === "running";
-  if (gatewayOnline && watchdogOnline) {
-    return status;
-  }
-
-  await runCommand("/bin/bash", [path.join(PROJECT_ROOT, "ctl.sh"), "start"], 60000);
-  return core.getStatusModel(true).catch(() => null);
-}
-
-async function detectModel() {
-  const gatewayLog = core?.config?.gatewayLog;
-  if (!gatewayLog) {
-    return "Unknown";
-  }
-  const result = await runCommand("/usr/bin/tail", ["-n", "200", gatewayLog], 10000);
-  if (!result.ok) {
-    return "Unknown";
-  }
-  const lines = result.stdout.split(/\r?\n/).reverse();
-  for (const line of lines) {
-    const m = line.match(/\[gateway\] agent model:\s*(.+)$/);
-    if (m) {
-      return m[1].trim();
-    }
-  }
-  return "Unknown";
-}
-
-async function bootstrapSequence() {
+async function getBootstrapState() {
   try {
-    await ensureLocalDirs();
-    await ensureExecutableScripts();
-    await log("info", "bootstrap started", `root=${PROJECT_ROOT}`);
-
-    const migration = await migrateTokenIfNeeded();
-    await importCore(migration.token);
-
-    if (!migration.token) {
-      bootstrapState = {
-        tokenMissing: true,
-        status: null,
-        model: "Unknown",
-        startupError: null,
-      };
-      await log("warn", "gateway token missing, setup flow required");
-      return bootstrapState;
-    }
-
-    await ensureLaunchdBaseline();
-    const status = await reconcileRuntime();
-
-    bootstrapState = {
-      tokenMissing: false,
-      status,
-      model: await detectModel(),
+    await ensureSupervisorReady();
+    const payload = await callSupervisor("getStatus", {}, 20000);
+    bootstrapSnapshot = {
+      ok: true,
+      status: payload.status,
+      attachRequired: payload.status?.target === "missing",
+      invalidTarget: payload.status?.target === "invalid",
       startupError: null,
     };
-    await log("info", "bootstrap finished", `overall=${status?.overall?.status || "unknown"}`);
-    return bootstrapState;
+    return bootstrapSnapshot;
   } catch (error) {
-    bootstrapState = {
-      tokenMissing: false,
+    await desktopLog("error", "bootstrap failed", error.message || String(error));
+    bootstrapSnapshot = {
+      ok: false,
       status: null,
-      model: "Unknown",
-      startupError: error.message || "bootstrap failed",
+      attachRequired: false,
+      invalidTarget: false,
+      startupError: error.message || String(error),
     };
-    await log("error", "bootstrap failed", bootstrapState.startupError);
-    return bootstrapState;
+    return bootstrapSnapshot;
   }
 }
 
-async function tailLogSource(source = "gateway", limit = 200) {
-  if (!core?.config) {
-    return { source, lines: [], error: "runtime core not ready" };
-  }
-  const lines = Math.max(10, Math.min(Number(limit || 200), 200));
-  const filePath = source === "watchdog" ? core.config.watchdogLog : core.config.gatewayLog;
-  const result = await runCommand("/usr/bin/tail", ["-n", String(lines), filePath], 10000);
-  if (!result.ok) {
-    return { source, lines: [], error: result.stderr || result.message || "failed to read logs" };
-  }
-  const rows = result.stdout
-    .split(/\r?\n/)
-    .filter(Boolean)
-    .map((line, index) => ({
-      id: `${source}_${index}`,
-      text: line,
-    }));
-
-  return { source, lines: rows };
+function createTrayIcon() {
+  const svg = `
+    <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 22 22">
+      <rect x="3" y="3" width="16" height="16" rx="5" fill="#dfe8ff" opacity="0.96"/>
+      <circle cx="11" cy="11" r="3.3" fill="#0d1220"/>
+    </svg>`;
+  return nativeImage
+    .createFromDataURL(`data:image/svg+xml;base64,${Buffer.from(svg).toString("base64")}`)
+    .resize({ width: 18, height: 18 });
 }
 
-async function runLockedAction(label, fn) {
-  if (actionLock) {
-    return {
-      ok: false,
-      error: {
-        code: "ACTION_LOCKED",
-        message: `Another action is running: ${label}`,
-      },
-    };
+function showWindow() {
+  if (!mainWindow) {
+    return;
   }
-
-  actionLock = true;
-  try {
-    return await fn();
-  } finally {
-    actionLock = false;
-  }
+  mainWindow.show();
+  mainWindow.focus();
 }
 
-async function waitForRuntimeHealthy(timeoutMs = 15000, intervalMs = 1000) {
-  const started = Date.now();
-  while (Date.now() - started < timeoutMs) {
-    const status = await core.getStatusModel(true).catch(() => null);
-    const gatewayOnline = status?.gateway?.status === "online";
-    const watchdogOnline = status?.watchdog?.status === "running";
-    if (gatewayOnline && watchdogOnline) {
-      return status;
-    }
-    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+function hideWindow() {
+  if (!mainWindow) {
+    return;
   }
-  return core.getStatusModel(true).catch(() => null);
+  mainWindow.hide();
 }
 
-async function restartAllServices() {
-  if (!core?.config) {
-    return {
-      ok: false,
-      error: {
-        code: "CORE_NOT_READY",
-        message: "Runtime core is not ready",
-      },
-    };
+function toggleWindow() {
+  if (!mainWindow) {
+    return;
   }
-  return runLockedAction("restart-all", async () => {
-    const uid = String(process.getuid());
-    const gatewayAttempt = {
-      primary: await runCommand(core.config.nodeBin, [core.config.openclawCli, "gateway", "restart"], 60000),
-      fallbackStop: null,
-      fallbackBootout: null,
-      fallbackStart: null,
-      fallbackKickstart: null,
-    };
-
-    if (!gatewayAttempt.primary.ok) {
-      gatewayAttempt.fallbackStop = await runCommand(core.config.nodeBin, [core.config.openclawCli, "gateway", "stop"], 20000);
-      gatewayAttempt.fallbackBootout = await runCommand(
-        "/bin/launchctl",
-        ["bootout", `gui/${uid}/${core.config.gatewayLabel}`],
-        15000,
-      );
-      gatewayAttempt.fallbackStart = await runCommand(core.config.nodeBin, [core.config.openclawCli, "gateway", "start"], 45000);
-      gatewayAttempt.fallbackKickstart = await runCommand(
-        "/bin/launchctl",
-        ["kickstart", "-k", `gui/${uid}/${core.config.gatewayLabel}`],
-        15000,
-      );
-    }
-
-    await runCommand("/bin/launchctl", ["enable", `gui/${uid}/${core.config.watchdogLabel}`], 10000);
-    const watchdogRestart = await runCommand("/bin/launchctl", ["kickstart", "-k", `gui/${uid}/${core.config.watchdogLabel}`], 15000);
-
-    const status = await waitForRuntimeHealthy(15000, 1000);
-    const ok = status?.gateway?.status === "online" && status?.watchdog?.status === "running";
-
-    const primaryError = gatewayAttempt.primary.stderr || gatewayAttempt.primary.message || "";
-    const fallbackError =
-      gatewayAttempt.fallbackStart?.stderr ||
-      gatewayAttempt.fallbackKickstart?.stderr ||
-      watchdogRestart.stderr ||
-      "";
-    return {
-      ok,
-      status,
-      detail: {
-        gatewayAttempt,
-        watchdogRestart,
-      },
-      error: ok
-        ? null
-        : {
-            code: "RESTART_FAILED",
-            message: primaryError || fallbackError || "restart failed",
-          },
-    };
-  });
-}
-
-async function runTestChat(message) {
-  if (!core?.config) {
-    return {
-      ok: false,
-      error: {
-        code: "CORE_NOT_READY",
-        message: "Runtime core is not ready",
-      },
-    };
+  if (mainWindow.isVisible()) {
+    hideWindow();
+  } else {
+    showWindow();
   }
-  return runLockedAction("test-chat", async () => {
-    const payload = await core.executeAction("test-chat", { message: String(message || "Health check") });
-    if (!payload.ok) {
-      return {
-        ok: false,
-        error: payload.error || { code: "TEST_CHAT_FAILED", message: "test chat failed" },
-      };
-    }
-
-    return {
-      ok: true,
-      summary: payload.summary,
-      reply: payload.result?.parsed?.reply || "",
-      latencyMs: payload.result?.parsed?.meta?.durationMs ?? null,
-      usage: payload.result?.parsed?.meta?.usage || null,
-    };
-  });
-}
-
-async function saveTokenAndRebootstrap(token) {
-  if (!core?.config) {
-    return {
-      ok: false,
-      error: {
-        code: "CORE_NOT_READY",
-        message: "Runtime core is not ready",
-      },
-    };
-  }
-  const clean = String(token || "").trim();
-  if (!clean) {
-    return {
-      ok: false,
-      error: {
-        code: "TOKEN_EMPTY",
-        message: "Token cannot be empty",
-      },
-    };
-  }
-
-  await setStoredToken(clean);
-  process.env.OPENCLAW_GATEWAY_TOKEN = clean;
-  core.config.gatewayToken = clean;
-
-  await ensureLaunchdBaseline();
-  const status = await reconcileRuntime();
-  const model = await detectModel();
-
-  bootstrapState = {
-    tokenMissing: false,
-    status,
-    model,
-    startupError: null,
-  };
-
-  return {
-    ok: true,
-    status,
-    model,
-  };
 }
 
 function createWindow() {
   mainWindow = new BrowserWindow({
-    width: 1240,
-    height: 840,
-    minWidth: 980,
-    minHeight: 680,
-    show: false,
-    backgroundColor: "#0b1020",
-    title: "OpenClaw",
+    width: 1320,
+    height: 900,
+    minWidth: 1120,
+    minHeight: 760,
+    title: "OpenClaw 守护桌面版",
     titleBarStyle: "hiddenInset",
+    vibrancy: "under-window",
+    backgroundColor: "#05070f",
     webPreferences: {
       preload: path.join(__dirname, "preload.cjs"),
-      nodeIntegration: false,
       contextIsolation: true,
-      devTools: true,
+      nodeIntegration: false,
+      sandbox: false,
     },
   });
 
   mainWindow.loadFile(path.join(__dirname, "ui", "index.html"));
-  mainWindow.once("ready-to-show", () => {
-    mainWindow?.show();
-  });
 
   mainWindow.on("close", (event) => {
     if (isQuitting) {
       return;
     }
     event.preventDefault();
-    mainWindow?.hide();
+    hideWindow();
   });
 }
 
 function createTray() {
-  const icon = nativeImage.createEmpty();
-  tray = new Tray(icon);
-  tray.setTitle("OC");
-  tray.setToolTip("OpenClaw");
+  tray = new Tray(createTrayIcon());
+  tray.setToolTip("OpenClaw 守护桌面版");
+  tray.on("click", toggleWindow);
 
-  const contextMenu = Menu.buildFromTemplate([
+  const menu = Menu.buildFromTemplate([
+    { label: "打开主窗口", click: showWindow },
     {
-      label: "Open",
-      click: () => {
-        if (mainWindow?.isVisible()) {
-          mainWindow.hide();
-        } else {
-          mainWindow?.show();
-          mainWindow?.focus();
-        }
-      },
-    },
-    {
-      label: "Check for Updates",
-      click: () => {
-        shell.openExternal(UPDATE_URL);
-      },
+      label: "检查更新",
+      click: () => shell.openExternal(UPDATE_URL),
     },
     { type: "separator" },
     {
-      label: "Quit",
+      label: "退出",
       click: () => {
+        isQuitting = true;
         app.quit();
       },
     },
   ]);
+  tray.setContextMenu(menu);
+}
 
-  tray.setContextMenu(contextMenu);
-  tray.on("click", () => {
-    if (mainWindow?.isVisible()) {
-      mainWindow.hide();
-    } else {
-      mainWindow?.show();
-      mainWindow?.focus();
-    }
+async function chooseTargetDirectory() {
+  const result = await dialog.showOpenDialog(mainWindow, {
+    title: "选择 OpenClaw 仓库",
+    buttonLabel: "连接仓库",
+    properties: ["openDirectory"],
+  });
+  if (result.canceled || !result.filePaths.length) {
+    return null;
+  }
+  return result.filePaths[0];
+}
+
+function currentRepoRoot() {
+  return bootstrapSnapshot?.status?.targetInfo?.repoRoot || null;
+}
+
+async function openRepoInTerminal(repoRoot) {
+  await execFileAsync("/usr/bin/open", ["-a", "Terminal", repoRoot], {
+    timeout: 10000,
+    maxBuffer: 1024 * 1024,
   });
 }
 
-function setupMenu() {
-  const template = [
-    {
-      label: "OpenClaw",
-      submenu: [
-        {
-          label: "Check for Updates",
-          click: () => shell.openExternal(UPDATE_URL),
+function wrap(handler) {
+  return async (...args) => {
+    try {
+      return await handler(...args);
+    } catch (error) {
+      await desktopLog("error", "IPC failed", error.message || String(error));
+      return {
+        ok: false,
+        error: {
+          message: error.message || String(error),
         },
-        { type: "separator" },
-        { role: "quit" },
-      ],
-    },
-    {
-      label: "Window",
-      submenu: [
-        { role: "minimize" },
-        { role: "close" },
-      ],
-    },
-  ];
-  const menu = Menu.buildFromTemplate(template);
-  Menu.setApplicationMenu(menu);
+      };
+    }
+  };
 }
 
-async function gracefulFullStop() {
-  if (!core?.config) {
-    return;
-  }
+async function registerIpc() {
+  ipcMain.handle(
+    "app:bootstrap",
+    wrap(async () => getBootstrapState()),
+  );
 
-  const uid = String(process.getuid());
-  const labels = [core.config.gatewayLabel, core.config.watchdogLabel, core.config.consoleLabel].filter(Boolean);
-  for (const label of labels) {
-    await runCommand("/bin/launchctl", ["disable", `gui/${uid}/${label}`], 10000);
-    await runCommand("/bin/launchctl", ["bootout", `gui/${uid}/${label}`], 10000);
-  }
+  ipcMain.handle(
+    "app:status",
+    wrap(async () => {
+      await ensureSupervisorReady();
+      const payload = await callSupervisor("getStatus", {}, 20000);
+      bootstrapSnapshot = { ...(bootstrapSnapshot || {}), status: payload.status };
+      return { ok: true, status: payload.status };
+    }),
+  );
+
+  ipcMain.handle(
+    "app:history",
+    wrap(async () => {
+      await ensureSupervisorReady();
+      const payload = await callSupervisor("getHistory", {}, 10000);
+      return { ok: true, ...payload };
+    }),
+  );
+
+  ipcMain.handle(
+    "app:choose-target",
+    wrap(async () => {
+      const repoRoot = await chooseTargetDirectory();
+      return { ok: true, repoRoot };
+    }),
+  );
+
+  ipcMain.handle(
+    "app:attach-target",
+    wrap(async (_event, repoRoot) => {
+      await ensureSupervisorReady();
+      const payload = await callSupervisor("attachTarget", { repoRoot }, 30000);
+      bootstrapSnapshot = { ...(bootstrapSnapshot || {}), status: payload.status };
+      return { ok: true, status: payload.status, config: payload.config };
+    }),
+  );
+
+  ipcMain.handle(
+    "app:set-auto-recovery",
+    wrap(async (_event, enabled) => {
+      await ensureSupervisorReady();
+      const payload = await callSupervisor("setAutoRecovery", { enabled }, 15000);
+      bootstrapSnapshot = { ...(bootstrapSnapshot || {}), status: payload.status };
+      return { ok: true, ...payload };
+    }),
+  );
+
+  ipcMain.handle(
+    "logs:get",
+    wrap(async (_event, source, limit) => {
+      await ensureSupervisorReady();
+      const payload = await callSupervisor("getLogs", { source, limit }, 15000);
+      return { ok: true, ...payload };
+    }),
+  );
+
+  ipcMain.handle(
+    "action:run",
+    wrap(async (_event, name) => {
+      await ensureSupervisorReady();
+      const payload = await callSupervisor("runAction", { name }, 60000);
+      if (payload?.status) {
+        bootstrapSnapshot = { ...(bootstrapSnapshot || {}), status: payload.status };
+      }
+      return { ok: true, ...payload };
+    }),
+  );
+
+  ipcMain.handle(
+    "app:open-logs",
+    wrap(async () => {
+      const modules = await ensureModules();
+      const paths = modules.runtime.getRuntimePaths();
+      await shell.openPath(paths.logDir);
+      return { ok: true, path: paths.logDir };
+    }),
+  );
+
+  ipcMain.handle(
+    "app:check-updates",
+    wrap(async () => {
+      await shell.openExternal(UPDATE_URL);
+      return { ok: true };
+    }),
+  );
+
+  ipcMain.handle(
+    "repo:open-finder",
+    wrap(async () => {
+      const repoRoot = currentRepoRoot();
+      if (!repoRoot) {
+        throw new Error("当前未连接仓库");
+      }
+      await shell.openPath(repoRoot);
+      return { ok: true };
+    }),
+  );
+
+  ipcMain.handle(
+    "repo:open-terminal",
+    wrap(async () => {
+      const repoRoot = currentRepoRoot();
+      if (!repoRoot) {
+        throw new Error("当前未连接仓库");
+      }
+      await openRepoInTerminal(repoRoot);
+      return { ok: true };
+    }),
+  );
 }
-
-ipcMain.handle("app:bootstrap", async () => bootstrapState);
-ipcMain.handle("app:status", async () => {
-  if (!core?.config) {
-    return {
-      ok: false,
-      status: null,
-      model: "Unknown",
-      checkedAt: ts(),
-      error: {
-        code: "CORE_NOT_READY",
-        message: "Runtime core is not ready",
-      },
-    };
-  }
-  const status = await core.getStatusModel(true).catch(() => null);
-  return {
-    ok: Boolean(status),
-    status,
-    model: await detectModel(),
-    checkedAt: ts(),
-  };
-});
-ipcMain.handle("logs:get", async (_event, source, limit) => tailLogSource(source, limit));
-ipcMain.handle("action:restart-all", async () => restartAllServices());
-ipcMain.handle("action:test-chat", async (_event, message) => runTestChat(message));
-ipcMain.handle("token:save", async (_event, token) => saveTokenAndRebootstrap(token));
-ipcMain.handle("app:retry", async () => {
-  const result = await bootstrapSequence();
-  return {
-    ok: !result.startupError,
-    ...result,
-  };
-});
-ipcMain.handle("app:open-logs", async () => {
-  const opened = await shell.openPath(APP_LOG_DIR);
-  return { ok: !opened, message: opened || "" };
-});
-ipcMain.handle("app:check-updates", async () => {
-  await shell.openExternal(UPDATE_URL);
-  return { ok: true };
-});
-
-app.on("before-quit", (event) => {
-  if (isQuitting) {
-    return;
-  }
-  event.preventDefault();
-  isQuitting = true;
-  gracefulFullStop()
-    .catch(async (error) => {
-      await log("error", "graceful full stop failed", error.message || "unknown");
-    })
-    .finally(() => {
-      app.exit(0);
-    });
-});
-
-app.on("activate", () => {
-  if (!mainWindow) {
-    createWindow();
-  }
-  mainWindow?.show();
-});
 
 app.whenReady().then(async () => {
-  await ensureLocalDirs();
-  await bootstrapSequence();
-  setupMenu();
+  Menu.setApplicationMenu(null);
+  await desktopLog("info", "App launching", appRoot());
   createWindow();
   createTray();
-  await log("info", "desktop app ready");
+  await registerIpc();
+
+  try {
+    await getBootstrapState();
+  } catch {
+    // bootstrap error is rendered in the UI
+  }
+
+  app.on("activate", () => {
+    showWindow();
+  });
+});
+
+app.on("before-quit", () => {
+  isQuitting = true;
 });

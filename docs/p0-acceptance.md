@@ -1,60 +1,79 @@
-# OpenClaw Desktop P0 Acceptance
+# OpenClaw Guardian P0 Acceptance
 
 Date: 2026-03-10  
-Scope: `openclaw-watchdog` desktop MVP
+Scope: Attach-only desktop guardian MVP
 
-## Result
+## Acceptance Result
 
-All locked P0 items were implemented and validated on macOS arm64.
+P0 implementation is in place and the core runtime chain has been validated on macOS arm64.
 
 ## Acceptance Checklist
 
-1. Desktop shell can boot and initialize runtime  
-Status: PASS
-- Evidence: `~/Library/Logs/OpenClaw/desktop.log` contains:
-  - `bootstrap started`
-  - `bootstrap finished | overall=healthy`
-  - `desktop app ready`
-
-2. Secure token handling (safe storage + migration)  
+1. Independent supervisor LaunchAgent exists  
 Status: PASS
 - Evidence:
-  - token encrypted file exists: `~/Library/Application Support/OpenClaw/secure-store.json`
-  - `.env` token line is masked after migration.
+  - `~/Library/LaunchAgents/ai.openclaw.guardian.supervisor.plist`
+  - Unix socket responds at `~/Library/Application Support/OpenClaw Guardian/runtime/guardian.sock`
 
-3. Runtime health projection works  
+2. Attach mode resolves an existing OpenClaw repo  
 Status: PASS
 - Evidence:
-  - `GET /api/status` returns `overall.status=healthy`
-  - watchdog state is fresh (`lastLoopAt`, `lastHealthResult`) via new state writer.
+  - attached target: `/Users/huangzhenfeng/openclaw`
+  - target validation resolves `openclaw.mjs`, Node runtime, and version `2026.3.8`
 
-4. Logs surface works for gateway/watchdog  
+3. Runtime status model resolves from CLI probes  
 Status: PASS
 - Evidence:
-  - `GET /api/logs?source=watchdog&limit=5` returns recent structured lines.
+  - `gateway status --json`
+  - `gateway probe --json`
+  - `gateway health`
+  - projected overall state: `healthy`
 
-5. Restart action works  
+4. Read-only Git surface works for the attached repo  
 Status: PASS
 - Evidence:
-  - `POST /api/actions/restart-gateway` returns `ok=true`
-  - fallback restart path added for launchctl bootstrap edge cases.
+  - branch: `main`
+  - dirty state: clean
+  - recent commit list resolves
 
-6. Test chat action works and returns metadata  
+5. Doctor action is read-only and executes through OpenClaw CLI  
 Status: PASS
 - Evidence:
-  - `POST /api/actions/test-chat` returns:
-    - parsed `reply`
-    - `durationMs`
-    - token `usage`
+  - `runAction(name="doctor")` returns structured summary lines
+  - no `doctor --repair` usage in P0 path
 
-7. DMG packaging output exists (macOS arm64)  
+6. Logs surface resolves through OpenClaw logs RPC with local fallback path available  
 Status: PASS
 - Evidence:
-  - `apps/desktop/dist/OpenClaw-0.1.0-arm64.dmg`
-  - `apps/desktop/dist/OpenClaw-0.1.0-arm64.dmg.blockmap`
+  - `getLogs(source="gateway")` returns structured lines via `openclaw logs --json`
+  - supervisor log file exists in `~/Library/Logs/OpenClaw Guardian/`
+
+7. Incident Memory is persisted outside the target repo  
+Status: PASS
+- Evidence:
+  - `~/Library/Application Support/OpenClaw Guardian/runtime/incidents.jsonl`
+  - `Last Incident` summary resolves after attach / doctor / export actions
+
+8. Diagnostics export works  
+Status: PASS
+- Evidence:
+  - zip created under:
+    `~/Library/Application Support/OpenClaw Guardian/exports/`
+
+9. Electron desktop shell boots on development launch  
+Status: PASS
+- Evidence:
+  - `npm --prefix apps/desktop run dev` launches without immediate crash
+  - desktop log entry written to `~/Library/Logs/OpenClaw Guardian/desktop.log`
+
+10. arm64 DMG builds successfully  
+Status: PASS
+- Evidence:
+  - `apps/desktop/dist/OpenClaw Guardian-0.1.0-arm64.dmg`
+  - `apps/desktop/dist/OpenClaw Guardian-0.1.0-arm64.dmg.blockmap`
 
 ## Notes
 
-- Development termination via terminal `Ctrl+C` bypasses app graceful quit path.  
-  Use normal app quit (`Cmd+Q`) in production usage.
-- Code signing/notarization is intentionally out of scope for this phase.
+- Auto recovery remains explicit opt-in.
+- Start / Stop / Restart wiring is implemented, but disruptive lifecycle actions were not stress-tested against a busy live runtime to avoid interrupting active user work.
+- Legacy repo files still exist as migration reference, but the new desktop runtime depends on `adapter / shared / supervisor`.

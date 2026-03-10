@@ -3,113 +3,243 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>OpenClaw</title>
+    <title>OpenClaw 守护桌面版</title>
     <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
-    <div class="backdrop blob-a"></div>
-    <div class="backdrop blob-b"></div>
+    <div class="backdrop haze-a"></div>
+    <div class="backdrop haze-b"></div>
+    <div class="backdrop grid-glow"></div>
 
-    <main class="app-shell">
-      <header class="topbar">
+    <main class="shell">
+      <header class="topbar panel-surface">
         <div>
-          <p class="eyebrow">OpenClaw Desktop</p>
-          <h1>Local Runtime Control</h1>
+          <p class="eyebrow">OpenClaw 守护桌面版</p>
+          <h1>连接本地 OpenClaw 运行时</h1>
+          <p class="subtitle">在不修改用户仓库的前提下，完成观测、恢复、诊断与运行记忆。</p>
         </div>
-        <div class="top-actions">
-          <button id="checkUpdatesBtn" class="ghost-btn">Check for Updates</button>
+        <div class="topbar-actions">
+          <button id="historyBtn" class="ghost-btn">历史</button>
+          <button id="checkUpdatesBtn" class="ghost-btn">检查更新</button>
         </div>
       </header>
 
-      <section id="skeleton" class="panel loading-panel">
+      <section id="skeleton" class="panel-surface loading-panel">
         <div class="shimmer-row"></div>
-        <div class="shimmer-row"></div>
-        <div class="shimmer-row wide"></div>
-      </section>
-
-      <section id="setupFlow" class="panel hidden">
-        <h2>Secure Token Setup</h2>
-        <p>Enter your gateway token once. It will be encrypted and stored securely on this Mac.</p>
-        <label>
-          <span>Gateway Token</span>
-          <input id="tokenInput" type="password" placeholder="Paste token" />
-        </label>
-        <div class="row-actions">
-          <button id="saveTokenBtn" class="primary">Save & Start</button>
-        </div>
-        <p id="setupMessage" class="hint"></p>
-      </section>
-
-      <section id="errorState" class="panel error-state hidden">
-        <h2>Runtime Error</h2>
-        <p id="errorText">Unknown error.</p>
-        <div class="row-actions">
-          <button id="retryBtn" class="primary">Retry</button>
-          <button id="viewLogsBtn" class="ghost-btn">View Logs</button>
+        <div class="shimmer-row short"></div>
+        <div class="shimmer-grid">
+          <div class="shimmer-card"></div>
+          <div class="shimmer-card"></div>
+          <div class="shimmer-card"></div>
+          <div class="shimmer-card"></div>
         </div>
       </section>
 
-      <section id="dashboard" class="hidden">
-        <div class="tabs" role="tablist" aria-label="Main tabs">
-          <button class="tab active" data-tab="overview">Overview</button>
-          <button class="tab" data-tab="logs">Logs</button>
-          <button class="tab" data-tab="actions">Actions</button>
+      <section id="attachView" class="panel-surface attach-view hidden">
+        <div class="attach-copy">
+          <p class="eyebrow">连接模式</p>
+          <h2>连接已有 OpenClaw 仓库</h2>
+          <p>
+            应用会探测所选仓库，通过 OpenClaw CLI 读取运行状态，并将自己的运行记忆存放在 Application Support。
+          </p>
+        </div>
+        <div class="attach-card">
+          <label>
+            <span>已选择仓库</span>
+            <input id="repoPathInput" type="text" readonly placeholder="请选择 OpenClaw 仓库根目录" />
+          </label>
+          <div class="row-actions">
+            <button id="browseRepoBtn" class="primary">选择仓库</button>
+            <button id="attachRepoBtn" class="ghost-btn" disabled>连接</button>
+          </div>
+          <p id="attachMessage" class="hint">当前尚未连接仓库。</p>
+        </div>
+      </section>
+
+      <section id="errorState" class="panel-surface error-state hidden">
+        <h2>桌面端启动失败</h2>
+        <p id="errorText">Unknown startup error.</p>
+        <div class="row-actions">
+          <button id="retryBtn" class="primary">重试</button>
+          <button id="viewLogsBtn" class="ghost-btn">打开日志</button>
+        </div>
+      </section>
+
+      <section id="dashboard" class="dashboard hidden">
+        <div class="tabs" role="tablist" aria-label="Guardian tabs">
+          <button class="tab active" data-tab="overview">总览</button>
+          <button class="tab" data-tab="logs">日志</button>
+          <button class="tab" data-tab="actions">操作</button>
         </div>
 
         <div class="tab-panels">
-          <section class="panel tab-panel" data-panel="overview">
-            <div class="state-hero" id="globalState">Unknown</div>
+          <section class="tab-panel panel-surface" data-panel="overview">
+            <div class="hero-row">
+              <div>
+                <div id="globalState" class="state-hero" data-state="offline">离线</div>
+                <p id="stateSummary" class="hero-copy">Waiting for probe data.</p>
+              </div>
+              <div class="hero-meta">
+                <p id="targetPath" class="path-chip">未连接目标</p>
+                <button id="changeRepoBtn" class="ghost-btn small">切换目标</button>
+              </div>
+            </div>
+
             <div class="status-grid">
               <article class="status-card">
-                <h3>Gateway Status</h3>
-                <p id="gatewayStatus" class="value">-</p>
+                <h3>进程</h3>
+                <p id="processState" class="value">未知</p>
+                <p id="processMeta" class="meta">PID 不可用</p>
               </article>
               <article class="status-card">
-                <h3>Watchdog Status</h3>
-                <p id="watchdogStatus" class="value">-</p>
+                <h3>端口</h3>
+                <p id="portState" class="value">未知</p>
+                <p id="portMeta" class="meta">暂无监听数据</p>
               </article>
               <article class="status-card">
-                <h3>Model</h3>
-                <p id="modelValue" class="value">-</p>
+                <h3>网关健康</h3>
+                <p id="healthState" class="value">未知</p>
+                <p id="healthMeta" class="meta">暂无健康检查</p>
               </article>
               <article class="status-card">
-                <h3>Port</h3>
-                <p id="portValue" class="value">-</p>
+                <div class="status-card-top">
+                  <h3>自动恢复</h3>
+                  <label class="switch">
+                    <input id="autoRecoveryToggle" type="checkbox" />
+                    <span class="switch-pill"></span>
+                  </label>
+                </div>
+                <p id="recoveryState" class="value">已禁用</p>
+                <p id="recoveryMeta" class="meta">Supervisor 恢复默认关闭，需手动开启。</p>
               </article>
             </div>
-            <p id="overviewHint" class="hint">Polling every 2s.</p>
+
+            <div class="overview-grid">
+              <article class="info-card">
+                <div class="card-head">
+                  <div>
+                    <p class="eyebrow small">Git</p>
+                    <h3>已连接仓库</h3>
+                  </div>
+                  <div class="card-actions">
+                    <button id="openFinderBtn" class="ghost-btn small">打开 Finder</button>
+                    <button id="openTerminalBtn" class="ghost-btn small">打开终端</button>
+                  </div>
+                </div>
+                <div class="info-row">
+                  <span>分支</span>
+                  <strong id="gitBranch">-</strong>
+                </div>
+                <div class="info-row">
+                  <span>工作区</span>
+                  <strong id="gitDirty">-</strong>
+                </div>
+                <div class="info-row">
+                  <span>本地领先</span>
+                  <strong id="gitAhead">-</strong>
+                </div>
+                <div class="info-row compact">
+                  <span>HEAD</span>
+                  <strong id="gitHead">-</strong>
+                </div>
+                <ul id="gitRecentList" class="mini-list"></ul>
+              </article>
+
+              <article class="info-card">
+                <div class="card-head">
+                  <div>
+                    <p class="eyebrow small">Incident Memory</p>
+                    <h3>最近事件</h3>
+                  </div>
+                  <button id="openHistoryBtn" class="ghost-btn small">查看历史</button>
+                </div>
+                <div class="incident-grid">
+                  <div>
+                    <span class="meta-label">原因</span>
+                    <p id="incidentReason" class="incident-value">暂无事件记录。</p>
+                  </div>
+                  <div>
+                    <span class="meta-label">动作</span>
+                    <p id="incidentAction" class="incident-value">-</p>
+                  </div>
+                  <div>
+                    <span class="meta-label">结果</span>
+                    <p id="incidentResult" class="incident-value">-</p>
+                  </div>
+                  <div>
+                    <span class="meta-label">成功率</span>
+                    <p id="incidentRate" class="incident-value">-</p>
+                  </div>
+                </div>
+                <p id="incidentMeta" class="hint">事件记忆由 Guardian supervisor 保存，不写入目标仓库。</p>
+              </article>
+            </div>
           </section>
 
-          <section class="panel tab-panel hidden" data-panel="logs">
+          <section class="tab-panel panel-surface hidden" data-panel="logs">
             <div class="logs-toolbar">
               <div class="segmented">
-                <button class="source-btn active" data-source="gateway">Gateway</button>
-                <button class="source-btn" data-source="watchdog">Watchdog</button>
+                <button class="source-btn active" data-source="gateway">网关</button>
+                <button class="source-btn" data-source="supervisor">监督器</button>
               </div>
-              <button id="pauseLogsBtn" class="ghost-btn">Pause</button>
+              <div class="card-actions">
+                <button id="pauseLogsBtn" class="ghost-btn small">暂停</button>
+                <button id="openLogsBtn" class="ghost-btn small">打开日志目录</button>
+              </div>
             </div>
-            <pre id="logsOutput" class="logs-output"></pre>
+            <pre id="logsOutput" class="logs-output">暂无日志。</pre>
           </section>
 
-          <section class="panel tab-panel hidden" data-panel="actions">
-            <div class="action-block">
-              <h3>One-click Recovery</h3>
-              <p>Restart gateway and watchdog in one action.</p>
-              <button id="restartBtn" class="primary">Restart Runtime</button>
+          <section class="tab-panel panel-surface hidden" data-panel="actions">
+            <div class="actions-grid">
+              <article class="action-card">
+                <p class="eyebrow small">运行操作</p>
+                <h3>生命周期</h3>
+                <div class="action-row">
+                  <button class="primary action-btn" data-action="start">启动</button>
+                  <button class="ghost-btn action-btn" data-action="stop">停止</button>
+                  <button class="ghost-btn action-btn" data-action="restart">重启</button>
+                </div>
+              </article>
+
+              <article class="action-card">
+                <p class="eyebrow small">诊断</p>
+                <h3>体检与修复</h3>
+                <div class="action-row">
+                  <button class="primary action-btn" data-action="doctor">体检</button>
+                  <button class="ghost-btn action-btn" data-action="repair">修复</button>
+                </div>
+              </article>
+
+              <article class="action-card">
+                <p class="eyebrow small">证据导出</p>
+                <h3>导出</h3>
+                <div class="action-row">
+                  <button class="primary action-btn" data-action="exportDiagnostics">导出诊断包</button>
+                </div>
+              </article>
             </div>
-            <div class="action-block">
-              <h3>Test Chat</h3>
-              <label>
-                <span>Message</span>
-                <input id="chatInput" type="text" value="Reply with: desktop ready" />
-              </label>
-              <button id="chatBtn" class="primary">Run Test Chat</button>
-            </div>
-            <div id="actionResult" class="result-box">No action executed yet.</div>
+
+            <div id="actionResult" class="result-box">尚未执行任何操作。</div>
           </section>
         </div>
       </section>
     </main>
+
+    <aside id="historyDrawer" class="history-drawer hidden">
+      <div class="history-backdrop" id="closeHistoryBackdrop"></div>
+      <div class="history-panel panel-surface">
+        <div class="history-head">
+          <div>
+            <p class="eyebrow small">运行记忆</p>
+            <h2>事件历史</h2>
+          </div>
+          <button id="closeHistoryBtn" class="ghost-btn small">关闭</button>
+        </div>
+        <div id="historySummary" class="history-summary">暂无事件记录。</div>
+        <div id="historyList" class="history-list"></div>
+      </div>
+    </aside>
 
     <script src="./app.js"></script>
   </body>
