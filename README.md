@@ -1,10 +1,12 @@
 # OpenClaw Watchdog Desktop
 
+Local watchdog console for OpenClaw with auto-recovery, runtime visibility, logs, and operator actions.
+
 Location: `/Users/huangzhenfeng/WorkSpace/openclaw-watchdog`
 
 ## What This Project Is
 
-This repository now provides a macOS desktop app shell for the existing OpenClaw watchdog runtime.
+This repository provides a macOS desktop app shell for the existing OpenClaw watchdog runtime.
 
 - Desktop UI (Electron): `Overview / Logs / Actions`
 - Runtime core: watchdog + gateway + launchd
@@ -101,4 +103,4 @@ cd /Users/huangzhenfeng/WorkSpace/openclaw-watchdog
 
 - `docs/desktop-adr.md`: desktop architecture decisions
 - `docs/baseline.md`: baseline freeze and environment capture
-- `OpenClawPlan/openclaw_watchdog_plan.md`: full execution plan (outside this repo root)
+- `docs/p0-acceptance.md`: P0 acceptance evidence
