@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>OpenClaw</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="backdrop blob-a"></div>
+    <div class="backdrop blob-b"></div>
+
+    <main class="app-shell">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">OpenClaw Desktop</p>
+          <h1>Local Runtime Control</h1>
+        </div>
+        <div class="top-actions">
+          <button id="checkUpdatesBtn" class="ghost-btn">Check for Updates</button>
+        </div>
+      </header>
+
+      <section id="skeleton" class="panel loading-panel">
+        <div class="shimmer-row"></div>
+        <div class="shimmer-row"></div>
+        <div class="shimmer-row wide"></div>
+      </section>
+
+      <section id="setupFlow" class="panel hidden">
+        <h2>Secure Token Setup</h2>
+        <p>Enter your gateway token once. It will be encrypted and stored securely on this Mac.</p>
+        <label>
+          <span>Gateway Token</span>
+          <input id="tokenInput" type="password" placeholder="Paste token" />
+        </label>
+        <div class="row-actions">
+          <button id="saveTokenBtn" class="primary">Save & Start</button>
+        </div>
+        <p id="setupMessage" class="hint"></p>
+      </section>
+
+      <section id="errorState" class="panel error-state hidden">
+        <h2>Runtime Error</h2>
+        <p id="errorText">Unknown error.</p>
+        <div class="row-actions">
+          <button id="retryBtn" class="primary">Retry</button>
+          <button id="viewLogsBtn" class="ghost-btn">View Logs</button>
+        </div>
+      </section>
+
+      <section id="dashboard" class="hidden">
+        <div class="tabs" role="tablist" aria-label="Main tabs">
+          <button class="tab active" data-tab="overview">Overview</button>
+          <button class="tab" data-tab="logs">Logs</button>
+          <button class="tab" data-tab="actions">Actions</button>
+        </div>
+
+        <div class="tab-panels">
+          <section class="panel tab-panel" data-panel="overview">
+            <div class="state-hero" id="globalState">Unknown</div>
+            <div class="status-grid">
+              <article class="status-card">
+                <h3>Gateway Status</h3>
+                <p id="gatewayStatus" class="value">-</p>
+              </article>
+              <article class="status-card">
+                <h3>Watchdog Status</h3>
+                <p id="watchdogStatus" class="value">-</p>
+              </article>
+              <article class="status-card">
+                <h3>Model</h3>
+                <p id="modelValue" class="value">-</p>
+              </article>
+              <article class="status-card">
+                <h3>Port</h3>
+                <p id="portValue" class="value">-</p>
+              </article>
+            </div>
+            <p id="overviewHint" class="hint">Polling every 2s.</p>
+          </section>
+
+          <section class="panel tab-panel hidden" data-panel="logs">
+            <div class="logs-toolbar">
+              <div class="segmented">
+                <button class="source-btn active" data-source="gateway">Gateway</button>
+                <button class="source-btn" data-source="watchdog">Watchdog</button>
+              </div>
+              <button id="pauseLogsBtn" class="ghost-btn">Pause</button>
+            </div>
+            <pre id="logsOutput" class="logs-output"></pre>
+          </section>
+
+          <section class="panel tab-panel hidden" data-panel="actions">
+            <div class="action-block">
+              <h3>One-click Recovery</h3>
+              <p>Restart gateway and watchdog in one action.</p>
+              <button id="restartBtn" class="primary">Restart Runtime</button>
+            </div>
+            <div class="action-block">
+              <h3>Test Chat</h3>
+              <label>
+                <span>Message</span>
+                <input id="chatInput" type="text" value="Reply with: desktop ready" />
+              </label>
+              <button id="chatBtn" class="primary">Run Test Chat</button>
+            </div>
+            <div id="actionResult" class="result-box">No action executed yet.</div>
+          </section>
+        </div>
+      </section>
+    </main>
+
+    <script src="./app.js"></script>
+  </body>
+</html>

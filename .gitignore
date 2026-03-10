@@ -1,0 +1,19 @@
+# Secrets
+.env
+
+# macOS / editor
+.DS_Store
+.vscode/
+
+# Node / build artifacts
+node_modules/
+apps/desktop/node_modules/
+apps/desktop/dist/
+
+# Runtime/generated state
+runtime/
+backups/
+*.log
+
+# Local launchd/runtime side effects
+*.pid

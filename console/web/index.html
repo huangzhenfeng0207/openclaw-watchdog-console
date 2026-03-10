@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>OpenClaw 控制台</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div class="backdrop backdrop-a"></div>
+    <div class="backdrop backdrop-b"></div>
+    <main class="shell">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">OpenClaw 控制台</p>
+          <h1>把守护系统变成一个能读懂的应用</h1>
+        </div>
+        <div class="topbar-meta" id="metaSummary">加载中...</div>
+      </header>
+
+      <section class="hero" id="hero">
+        <div class="hero-copy">
+          <p class="hero-kicker">全局状态</p>
+          <h2 id="overallStatus">加载中</h2>
+          <p id="overallSummary">正在获取运行状态...</p>
+        </div>
+        <div class="hero-side">
+          <div class="hero-stat">
+            <span>更新时间</span>
+            <strong id="overallUpdatedAt">-</strong>
+          </div>
+          <div class="hero-stat">
+            <span>健康置信度</span>
+            <strong id="confidenceText">-</strong>
+          </div>
+        </div>
+      </section>
+
+      <section class="grid cards" id="coreCards">
+        <article class="card status-card" data-card="gateway">
+          <div class="card-head">
+            <p class="eyebrow">核心服务</p>
+            <h3>OpenClaw</h3>
+            <span class="pill" id="gatewayPill">-</span>
+          </div>
+          <dl class="facts" id="gatewayFacts"></dl>
+        </article>
+
+        <article class="card status-card" data-card="watchdog">
+          <div class="card-head">
+            <p class="eyebrow">守护程序</p>
+            <h3>Watchdog</h3>
+            <span class="pill" id="watchdogPill">-</span>
+          </div>
+          <dl class="facts" id="watchdogFacts"></dl>
+        </article>
+
+        <article class="card status-card" data-card="recovery">
+          <div class="card-head">
+            <p class="eyebrow">故障恢复</p>
+            <h3>Recovery</h3>
+            <span class="pill" id="recoveryPill">-</span>
+          </div>
+          <dl class="facts" id="recoveryFacts"></dl>
+        </article>
+      </section>
+
+      <section class="grid split">
+        <article class="card incident-card">
+          <div class="card-head">
+            <p class="eyebrow">最后一次事件</p>
+            <h3>最近一次异常闭环</h3>
+          </div>
+          <div id="incidentPanel" class="incident-empty">正在加载异常记录...</div>
+        </article>
+
+        <article class="card action-card">
+          <div class="card-head">
+            <p class="eyebrow">操作面板</p>
+            <h3>受控操作</h3>
+          </div>
+          <div class="action-grid">
+            <button class="action-btn primary" data-action="restart-gateway">重启网关</button>
+            <button class="action-btn primary" data-action="postboot-check">运行启动后检查</button>
+            <button class="action-btn" data-action="create-backup">创建备份</button>
+            <button class="action-btn" data-action="test-chat">测试对话</button>
+          </div>
+          <label class="field">
+            <span>测试消息</span>
+            <input id="chatMessage" type="text" value="请简短回复：OpenClaw 控制台在线" />
+          </label>
+          <div class="rollback-row">
+            <label class="field">
+              <span>回滚快照</span>
+              <select id="rollbackSelect"></select>
+            </label>
+            <button class="action-btn subtle" data-action="rollback">确认回滚</button>
+          </div>
+          <div class="action-hint" id="actionHint">当目前运行状态允许时，在此可执行相关操作。</div>
+          <div class="action-state" id="actionState">当前无进行中的手动操作。</div>
+        </article>
+      </section>
+
+      <section class="grid split">
+        <article class="card timeline-card">
+          <div class="card-head">
+            <p class="eyebrow">实时动态</p>
+            <h3>最近事件</h3>
+          </div>
+          <ol class="timeline" id="timelineList"></ol>
+        </article>
+
+        <article class="card config-card">
+          <div class="card-head">
+            <p class="eyebrow">运行时快照</p>
+            <h3>配置摘要</h3>
+          </div>
+          <dl class="facts" id="metaFacts"></dl>
+        </article>
+      </section>
+
+      <section class="card logs-card">
+        <div class="card-head">
+          <div>
+            <p class="eyebrow">原始记录</p>
+            <h3>日志证据层</h3>
+          </div>
+          <div class="logs-controls">
+            <div class="tab-strip">
+              <button class="tab is-active" data-log-source="gateway">网关 (Gateway)</button>
+              <button class="tab" data-log-source="watchdog">监控狗 (Watchdog)</button>
+              <button class="tab" data-log-source="error">错误 (Errors)</button>
+            </div>
+            <button class="action-btn subtle compact" id="toggleLogs">展开日志</button>
+            <button class="action-btn subtle compact" id="refreshLogs">刷新</button>
+          </div>
+        </div>
+        <div class="logs-shell is-collapsed" id="logsShell">
+          <pre id="logsOutput">日志默认折叠。</pre>
+        </div>
+      </section>
+    </main>
+
+    <script src="/app.js" defer></script>
+  </body>
+</html>

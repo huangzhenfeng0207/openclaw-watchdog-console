@@ -1,0 +1,67 @@
+{
+  "name": "openclaw-desktop",
+  "version": "0.1.0",
+  "description": "Local desktop console for OpenClaw watchdog runtime on macOS",
+  "author": "OpenClaw Team",
+  "private": true,
+  "type": "module",
+  "main": "main.mjs",
+  "scripts": {
+    "dev": "electron .",
+    "build:dmg": "electron-builder --mac dmg --arm64"
+  },
+  "devDependencies": {
+    "electron": "^33.2.1",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "ai.openclaw.desktop",
+    "productName": "OpenClaw",
+    "directories": {
+      "output": "dist"
+    },
+    "asar": true,
+    "files": [
+      "main.mjs",
+      "preload.cjs",
+      "ui/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "../../console",
+        "to": "app-root/console"
+      },
+      {
+        "from": "../../install.sh",
+        "to": "app-root/install.sh"
+      },
+      {
+        "from": "../../watchdog.sh",
+        "to": "app-root/watchdog.sh"
+      },
+      {
+        "from": "../../ctl.sh",
+        "to": "app-root/ctl.sh"
+      },
+      {
+        "from": "../../chat-with-openclaw.sh",
+        "to": "app-root/chat-with-openclaw.sh"
+      },
+      {
+        "from": "../../.env.example",
+        "to": "app-root/.env.example"
+      }
+    ],
+    "mac": {
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "arm64"
+          ]
+        }
+      ],
+      "category": "public.app-category.developer-tools"
+    }
+  }
+}
